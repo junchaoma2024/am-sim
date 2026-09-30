@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
+<title>普通调幅波</title>
+<style>
+  :root { --ink: #1a1a1a; --muted: #666; --line: #d9d9d9; --blue: #0b2fd6; --navy: #1f3a93; --magenta: #e61ae6; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #fff; color: var(--ink);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 0 14px 28px; }
+  header { padding: 14px 0 6px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .hint { font-size: 14px; color: var(--muted); margin: 4px 0 0; }
+  .controls { position: sticky; top: 0; z-index: 2; background: #fff; padding: 10px 0 8px; border-bottom: 1px solid var(--line); }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .val { font-size: 18px; font-weight: 600; min-width: 112px; font-variant-numeric: tabular-nums; }
+  .step { width: 40px; height: 40px; border: 1px solid #bbb; border-radius: 8px; background: #fff; font-size: 22px; line-height: 1; color: var(--ink); }
+  .step:active { background: #f0f0f0; }
+  input[type=range] { flex: 1; height: 40px; margin: 0; accent-color: var(--navy); }
+  .ticks { display: flex; justify-content: space-between; margin: 0 50px 0 172px; font-size: 12px; color: var(--muted); }
+  .panel { margin-top: 14px; }
+  .panel h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  canvas { display: block; width: 100%; }
+  sub { font-size: 0.72em; }
+  @media (max-width: 480px) {
+    .val { min-width: 96px; font-size: 17px; }
+    .ticks { margin: 0 50px 0 156px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>普通调幅波</h1>
+    <p class="hint">拖动滑块，改变调幅度 m<sub>a</sub></p>
+  </header>
+
+  <section class="controls" aria-label="调幅度">
+    <div class="row">
+      <span class="val" id="val">m<sub>a</sub> = 0.50</span>
+      <button class="step" id="dec" type="button" aria-label="减小 0.05">−</button>
+      <input type="range" id="ma" min="0" max="2" step="0.05" value="0.5" aria-label="调幅度 m_a">
+      <button class="step" id="inc" type="button" aria-label="增大 0.05">+</button>
+    </div>
+    <div class="ticks" aria-hidden="true"><span>0</span><span>0.5</span><span>1</span><span>1.5</span><span>2</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>① 调制信号 u<sub>Ω</sub>(t)</h2>
+    <canvas id="c1" aria-label="调制信号波形"></canvas>
+  </section>
+  <section class="panel">
+    <h2>② 已调信号 u<sub>AM</sub>(t)</h2>
+    <canvas id="c2" aria-label="已调信号波形"></canvas>
+  </section>
+  <section class="panel">
+    <h2>③ 恢复出的包络</h2>
+    <canvas id="c3" aria-label="恢复出的包络波形"></canvas>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  // Model (normalised: U_cm = 1, u_Ω amplitude = 1). Two modulating periods are shown.
+  var PERIODS = 2;          // modulating periods on screen
+  var RATIO = 30;           // carrier cycles per modulating period
+  var N = 3600;             // samples across the screen
+
+  var slider = document.getElementById("ma");
+  var valEl = document.getElementById("val");
+  var canvases = [document.getElementById("c1"), document.getElementById("c2"), document.getElementById("c3")];
+
+  function phaseAt(i) { return 2 * Math.PI * PERIODS * i / N; }            // Ωt
+
+  function envelope(ma) {
+    // ideal envelope detector output |1 + m_a cos Ωt|, DC kept
+    var e = new Float64Array(N + 1);
+    for (var i = 0; i <= N; i++) e[i] = Math.abs(1 + ma * Math.cos(phaseAt(i)));
+    return e;
+  }
+
+  function setup(cv) {
+    var w = cv.clientWidth;
+    var h = Math.round(Math.max(130, Math.min(220, w * 0.42)));
+    var dpr = window.devicePixelRatio || 1;
+    cv.style.height = h + "px";
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    var ctx = cv.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    return { ctx: ctx, w: w, h: h };
+  }
+
+  // mode "mid": zero line in the middle, values in [-yMax, yMax]; mode "bottom": zero line at the bottom, values in [0, yMax]
+  function axes(g, yLabel, yMax, mode) {
+    var ctx = g.ctx, L = 26, R = g.w - 14, T = 10, B = g.h - 8;
+    var base = mode === "bottom" ? B - 14 : (T + B) / 2;
+    ctx.strokeStyle = "#000"; ctx.fillStyle = "#000"; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(L, B); ctx.lineTo(L, T); ctx.stroke();                 // y axis
+    ctx.beginPath(); ctx.moveTo(L, T - 1); ctx.lineTo(L - 4.5, T + 9); ctx.lineTo(L + 4.5, T + 9); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(L, base); ctx.lineTo(R, base); ctx.stroke();           // t axis
+    ctx.beginPath(); ctx.moveTo(R + 1, base); ctx.lineTo(R - 9, base - 4.5); ctx.lineTo(R - 9, base + 4.5); ctx.closePath(); ctx.fill();
+    ctx.font = "italic 13px 'Times New Roman', serif";
+    ctx.fillText("t", R - 8, mode === "bottom" ? base - 8 : base + 18);
+    ctx.font = "italic 12px 'Times New Roman', serif";
+    if (yLabel) ctx.fillText(yLabel, L + 6, T + 10);
+    var top = T + 4, scale = mode === "bottom" ? (base - top) / yMax : (base - top) / yMax;
+    return { L: L + 2, R: R - 12, T: top, B: B - 2, base: base, scale: scale };
+  }
+
+  function plot(g, box, ys, color, width, dash) {
+    var ctx = g.ctx, i, x, y;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(box.L, box.T - 4, box.R - box.L, box.B - box.T + 8); ctx.clip();
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    for (i = 0; i <= N; i++) {
+      x = box.L + (box.R - box.L) * i / N;
+      y = box.base - ys[i] * box.scale;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw() {
+    var ma = Math.round(parseFloat(slider.value) * 100) / 100;
+    valEl.innerHTML = "m<sub>a</sub> = " + ma.toFixed(2);
+    var i, u = new Float64Array(N + 1), am = new Float64Array(N + 1);
+    for (i = 0; i <= N; i++) {
+      var ph = phaseAt(i);
+      u[i] = Math.cos(ph);
+      am[i] = (1 + ma * Math.cos(ph)) * Math.cos(RATIO * ph);
+    }
+    var g1 = setup(canvases[0]), b1 = axes(g1, "uΩ", 1.3, "mid");
+    plot(g1, b1, u, "#1f3a93", 2.2);
+    var g2 = setup(canvases[1]), b2 = axes(g2, "uAM", 3.2, "mid");
+    plot(g2, b2, am, "#e61ae6", 1.2);
+    var g3 = setup(canvases[2]), b3 = axes(g3, "", 3.2, "bottom");
+    plot(g3, b3, envelope(ma), "#0b2fd6", 2.6, [9, 6]);
+  }
+
+  function nudge(d) {
+    var v = Math.round((parseFloat(slider.value) + d) * 100) / 100;
+    slider.value = Math.min(2, Math.max(0, v)).toFixed(2);
+    draw();
+  }
+
+  slider.addEventListener("input", draw);
+  document.getElementById("dec").addEventListener("click", function () { nudge(-0.05); });
+  document.getElementById("inc").addEventListener("click", function () { nudge(0.05); });
+  var t = null;
+  window.addEventListener("resize", function () { clearTimeout(t); t = setTimeout(draw, 80); });
+  draw();
+})();
+</script>
+</body>
+</html>
