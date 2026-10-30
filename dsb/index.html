@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
+<title>AM 与 DSB 信号</title>
+<style>
+  :root { --ink: #1a1a1a; --muted: #666; --line: #d9d9d9; --blue: #0b2fd6; --navy: #1f3a93; --magenta: #e61ae6; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #fff; color: var(--ink);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 0 14px 28px; }
+  header { padding: 14px 0 6px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .hint { font-size: 14px; color: var(--muted); margin: 4px 0 0; }
+  .controls { position: sticky; top: 0; z-index: 2; background: #fff; padding: 8px 0 6px; border-bottom: 1px solid var(--line); }
+  .seg { display: flex; gap: 0; margin: 0 0 6px; }
+  .seg button { flex: 1; height: 38px; border: 1px solid var(--navy); background: #fff; color: var(--navy); font-size: 16px; font-weight: 600; }
+  .seg button:first-child { border-radius: 8px 0 0 8px; }
+  .seg button:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+  .seg button.on { background: var(--navy); color: #fff; }
+  .row { display: flex; align-items: center; gap: 8px; height: 40px; }
+  .val { font-size: 15px; font-weight: 600; min-width: 150px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .step { width: 34px; height: 34px; border: 1px solid #bbb; border-radius: 8px; background: #fff; font-size: 20px; line-height: 1; color: var(--ink); flex: none; }
+  .step:active { background: #f0f0f0; }
+  input[type=range] { flex: 1; min-width: 60px; height: 34px; margin: 0; accent-color: var(--navy); }
+  .panel { margin-top: 12px; }
+  .panel h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  canvas { display: block; width: 100%; }
+  sub { font-size: 0.72em; }
+  @media (max-width: 480px) {
+    .val { min-width: 128px; font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AM 与 DSB 信号</h1>
+    <p class="hint">选择信号类型，拖动滑块改变参数</p>
+  </header>
+
+  <section class="controls" aria-label="参数">
+    <div class="seg" role="group" aria-label="信号类型">
+      <button type="button" id="mAM" class="on">AM</button>
+      <button type="button" id="mDSB">DSB</button>
+    </div>
+    <div class="row">
+      <span class="val" id="vUo"></span>
+      <button class="step" type="button" data-k="Uo" data-d="-1" aria-label="减小">−</button>
+      <input type="range" id="Uo" min="0" max="2" step="0.1" value="1" aria-label="调制信号振幅">
+      <button class="step" type="button" data-k="Uo" data-d="1" aria-label="增大">+</button>
+    </div>
+    <div class="row">
+      <span class="val" id="vUc"></span>
+      <button class="step" type="button" data-k="Uc" data-d="-1" aria-label="减小">−</button>
+      <input type="range" id="Uc" min="0.5" max="2" step="0.1" value="1.5" aria-label="载波振幅">
+      <button class="step" type="button" data-k="Uc" data-d="1" aria-label="增大">+</button>
+    </div>
+    <div class="row">
+      <span class="val" id="vF"></span>
+      <button class="step" type="button" data-k="F" data-d="-1" aria-label="减小">−</button>
+      <input type="range" id="F" min="1" max="3" step="0.5" value="1" aria-label="调制信号角频率">
+      <button class="step" type="button" data-k="F" data-d="1" aria-label="增大">+</button>
+    </div>
+    <div class="row">
+      <span class="val" id="vFc"></span>
+      <button class="step" type="button" data-k="Fc" data-d="-1" aria-label="减小">−</button>
+      <input type="range" id="Fc" min="20" max="60" step="5" value="30" aria-label="载波角频率">
+      <button class="step" type="button" data-k="Fc" data-d="1" aria-label="增大">+</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>① 调制信号 u<sub>Ω</sub>(t)</h2>
+    <canvas id="c1" aria-label="调制信号波形"></canvas>
+  </section>
+  <section class="panel">
+    <h2 id="h2">② 已调信号 u<sub>AM</sub>(t)</h2>
+    <canvas id="c2" aria-label="已调信号波形"></canvas>
+  </section>
+  <section class="panel">
+    <h2>③ 从已调信号中取出的包络</h2>
+    <canvas id="c3" aria-label="包络波形"></canvas>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  // Fixed 1 ms window. AM: (U_cm + K_a u_Ω) cos ω_c t with K_a = 1. DSB: k u_Ω u_c with k = 1 V^-1.
+  var WINDOW_MS = 1;
+  var N = 4000;
+  var mode = "AM";
+  var el = function (id) { return document.getElementById(id); };
+  var inputs = { Uo: el("Uo"), Uc: el("Uc"), F: el("F"), Fc: el("Fc") };
+  var canvases = [el("c1"), el("c2"), el("c3")];
+
+  function num(k) { return parseFloat(inputs[k].value); }
+
+  function setup(cv) {
+    var w = cv.clientWidth;
+    var h = Math.round(Math.max(120, Math.min(200, w * 0.38)));
+    var dpr = window.devicePixelRatio || 1;
+    cv.style.height = h + "px";
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    var ctx = cv.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    return { ctx: ctx, w: w, h: h };
+  }
+
+  // mode "mid": zero line in the middle; mode "bottom": zero line at the bottom
+  function axes(g, yLabel, yMax, where) {
+    var ctx = g.ctx, L = 26, R = g.w - 14, T = 10, B = g.h - 8;
+    var base = where === "bottom" ? B - 14 : (T + B) / 2;
+    ctx.strokeStyle = "#000"; ctx.fillStyle = "#000"; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(L, B); ctx.lineTo(L, T); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(L, T - 1); ctx.lineTo(L - 4.5, T + 9); ctx.lineTo(L + 4.5, T + 9); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(L, base); ctx.lineTo(R, base); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(R + 1, base); ctx.lineTo(R - 9, base - 4.5); ctx.lineTo(R - 9, base + 4.5); ctx.closePath(); ctx.fill();
+    ctx.font = "italic 13px 'Times New Roman', serif";
+    ctx.fillText("t", R - 8, where === "bottom" ? base - 8 : base + 18);
+    ctx.font = "italic 12px 'Times New Roman', serif";
+    if (yLabel) ctx.fillText(yLabel, L + 6, T + 10);
+    var top = T + 4;
+    return { L: L + 2, R: R - 12, T: top, B: B - 2, base: base, scale: (base - top) / yMax };
+  }
+
+  function plot(g, box, ys, color, width, dash) {
+    var ctx = g.ctx, i, x, y;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(box.L, box.T - 4, box.R - box.L, box.B - box.T + 8); ctx.clip();
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    for (i = 0; i <= N; i++) {
+      x = box.L + (box.R - box.L) * i / N;
+      y = box.base - ys[i] * box.scale;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function labels(Uo, Uc, F, Fc) {
+    el("vUo").innerHTML = "U<sub>Ωm</sub> = " + Uo.toFixed(1) + " V";
+    el("vUc").innerHTML = "U<sub>cm</sub> = " + Uc.toFixed(1) + " V";
+    el("vF").innerHTML = "Ω = 2π × " + F.toFixed(1) + " kHz";
+    el("vFc").innerHTML = "ω<sub>c</sub> = 2π × " + Fc.toFixed(0) + " kHz";
+    el("h2").innerHTML = "② 已调信号 u<sub>" + mode + "</sub>(t)";
+    el("mAM").className = mode === "AM" ? "on" : "";
+    el("mDSB").className = mode === "DSB" ? "on" : "";
+  }
+
+  function draw() {
+    var Uo = num("Uo"), Uc = num("Uc"), F = num("F"), Fc = num("Fc");
+    labels(Uo, Uc, F, Fc);
+    var i, u = new Float64Array(N + 1), s = new Float64Array(N + 1), env = new Float64Array(N + 1);
+    for (i = 0; i <= N; i++) {
+      var tms = WINDOW_MS * i / N;
+      var uo = Uo * Math.cos(2 * Math.PI * F * tms);
+      var c = Math.cos(2 * Math.PI * Fc * tms);
+      var amp = mode === "AM" ? (Uc + uo) : (uo * Uc);
+      u[i] = uo;
+      s[i] = amp * c;
+      env[i] = Math.abs(amp);
+    }
+    var g1 = setup(canvases[0]), b1 = axes(g1, "uΩ", 2.3, "mid");
+    plot(g1, b1, u, "#1f3a93", 2.2);
+    var g2 = setup(canvases[1]), b2 = axes(g2, "u" + mode, 4.5, "mid");
+    plot(g2, b2, s, "#e61ae6", 1.1);
+    var g3 = setup(canvases[2]), b3 = axes(g3, "", 4.5, "bottom");
+    plot(g3, b3, env, "#0b2fd6", 2.6, [9, 6]);
+  }
+
+  function nudge(k, dir) {
+    var inp = inputs[k], step = parseFloat(inp.step);
+    var v = parseFloat(inp.value) + dir * step;
+    v = Math.min(parseFloat(inp.max), Math.max(parseFloat(inp.min), v));
+    inp.value = (Math.round(v / step) * step).toFixed(2);
+    draw();
+  }
+
+  Object.keys(inputs).forEach(function (k) { inputs[k].addEventListener("input", draw); });
+  Array.prototype.forEach.call(document.querySelectorAll(".step"), function (b) {
+    b.addEventListener("click", function () { nudge(b.getAttribute("data-k"), parseFloat(b.getAttribute("data-d"))); });
+  });
+  el("mAM").addEventListener("click", function () { mode = "AM"; draw(); });
+  el("mDSB").addEventListener("click", function () { mode = "DSB"; draw(); });
+  var t = null;
+  window.addEventListener("resize", function () { clearTimeout(t); t = setTimeout(draw, 80); });
+  draw();
+})();
+</script>
+</body>
+</html>
