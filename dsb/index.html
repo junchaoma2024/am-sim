@@ -28,6 +28,15 @@
   input[type=range] { flex: 1; min-width: 60px; height: 34px; margin: 0; accent-color: var(--navy); }
   .panel { margin-top: 12px; }
   .panel h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 4px; }
+  .head h2 { margin: 0; }
+  .sw { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; color: #c00000; cursor: pointer; user-select: none; -webkit-user-select: none; flex: none; }
+  .sw input { -webkit-appearance: none; appearance: none; position: relative; width: 42px; height: 24px; margin: 0; border-radius: 12px; background: #c8c8c8; flex: none; cursor: pointer; }
+  .sw input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .sw input:checked { background: #e02020; }
+  .sw input:checked::after { left: 21px; }
+  .sw input:focus-visible { outline: 2px solid var(--navy); outline-offset: 2px; }
+  .note { font-size: 13px; line-height: 1.5; color: var(--muted); margin: 4px 0 0; }
   canvas { display: block; width: 100%; }
   sub { font-size: 0.72em; }
   @media (max-width: 480px) {
@@ -78,8 +87,16 @@
     <canvas id="c1" aria-label="调制信号波形"></canvas>
   </section>
   <section class="panel">
-    <h2 id="h2">② 已调信号 u<sub>AM</sub>(t)</h2>
+    <div class="head">
+      <h2 id="h2">② 已调信号 u<sub>AM</sub>(t)</h2>
+      <label class="sw"><input type="checkbox" id="ovl" role="switch"><span>叠加载波</span></label>
+    </div>
     <canvas id="c2" aria-label="已调信号波形"></canvas>
+  </section>
+  <section class="panel" id="pz" hidden>
+    <h2>②′ 灰色区域放大，与载波对照</h2>
+    <canvas id="cz" aria-label="已调信号与载波的局部放大波形"></canvas>
+    <p class="note">红色虚线是载波，只用来对照相位，幅度按比例缩放。绿色虚线处已调信号的振幅过零。</p>
   </section>
   <section class="panel">
     <h2>③ 从已调信号中取出的包络</h2>
@@ -130,13 +147,13 @@
   }
 
   function plot(g, box, ys, color, width, dash) {
-    var ctx = g.ctx, i, x, y;
+    var ctx = g.ctx, i, x, y, n = ys.length - 1;
     ctx.save();
     ctx.beginPath(); ctx.rect(box.L, box.T - 4, box.R - box.L, box.B - box.T + 8); ctx.clip();
     ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.setLineDash(dash || []);
     ctx.beginPath();
-    for (i = 0; i <= N; i++) {
-      x = box.L + (box.R - box.L) * i / N;
+    for (i = 0; i <= n; i++) {
+      x = box.L + (box.R - box.L) * i / n;
       y = box.base - ys[i] * box.scale;
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
@@ -154,23 +171,89 @@
     el("mDSB").className = mode === "DSB" ? "on" : "";
   }
 
+  // amplitude factor of the modulated signal: s(t) = amp(t) cos ω_c t, times in ms, frequencies in kHz
+  function ampAt(tms, Uo, Uc, F) {
+    var uo = Uo * Math.cos(2 * Math.PI * F * tms);
+    return mode === "AM" ? (Uc + uo) : (uo * Uc);
+  }
+
+  // Zoom window: centred where amp(t) changes sign (DSB, or over-modulated AM), otherwise where u_Ω
+  // first crosses zero; at most 3 carrier periods each side and never past t = 0.
+  function zoomRange(Uo, Uc, F, Fc) {
+    var t0 = mode === "AM" && Uo > Uc + 1e-9 ? Math.acos(-Uc / Uo) / (2 * Math.PI * F) : 1 / (4 * F);
+    return { t0: t0, hw: Math.min(3 / Fc, 0.95 / (4 * F)) };
+  }
+
+  function band(g, box, t1, t2) {
+    var x1 = box.L + (box.R - box.L) * Math.max(0, t1) / WINDOW_MS;
+    var x2 = box.L + (box.R - box.L) * Math.min(WINDOW_MS, t2) / WINDOW_MS;
+    g.ctx.fillStyle = "rgba(0, 0, 0, 0.07)";
+    g.ctx.fillRect(x1, box.T - 4, x2 - x1, box.B - box.T + 6);
+  }
+
+  function drawZoom(Uo, Uc, F, Fc, z) {
+    var M = 1200, i, t, peak = 0;
+    var a = new Float64Array(M + 1), zs = new Float64Array(M + 1), zc = new Float64Array(M + 1);
+    for (i = 0; i <= M; i++) {
+      t = z.t0 - z.hw + 2 * z.hw * i / M;
+      a[i] = ampAt(t, Uo, Uc, F);
+      zc[i] = Math.cos(2 * Math.PI * Fc * t);
+      zs[i] = a[i] * zc[i];
+      peak = Math.max(peak, Math.abs(zs[i]));
+    }
+    var flat = peak < 1e-9, ref = flat ? Uc : peak;
+    for (i = 0; i <= M; i++) zc[i] *= ref;
+    var g = setup(el("cz")), box = axes(g, "", ref * 1.45, "mid"), ctx = g.ctx;
+    plot(g, box, zc, "#e02020", 1.6, [6, 4]);
+    plot(g, box, zs, "#e61ae6", 2);
+    if (flat) return;
+    // segments between sign changes of amp(t): same sign as the carrier = in phase, opposite = antiphase
+    var cuts = [0];
+    for (i = 0; i < M; i++) if ((a[i] >= 0) !== (a[i + 1] >= 0)) cuts.push(i + 0.5);
+    cuts.push(M);
+    var px = function (k) { return box.L + (box.R - box.L) * k / M; };
+    ctx.save();
+    ctx.strokeStyle = "#00a060"; ctx.lineWidth = 1.6; ctx.setLineDash([5, 4]);
+    for (i = 1; i < cuts.length - 1; i++) {
+      ctx.beginPath(); ctx.moveTo(px(cuts[i]), box.T - 4); ctx.lineTo(px(cuts[i]), box.B); ctx.stroke();
+    }
+    ctx.font = "bold 14px -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    ctx.textAlign = "center";
+    for (i = 0; i < cuts.length - 1; i++) {
+      if (px(cuts[i + 1]) - px(cuts[i]) < 36) continue;
+      var pos = a[Math.round((cuts[i] + cuts[i + 1]) / 2)] >= 0;
+      ctx.fillStyle = pos ? "#1f3a93" : "#c00000";
+      ctx.fillText(pos ? "同相" : "反相", px((cuts[i] + cuts[i + 1]) / 2), box.T + 10);
+    }
+    ctx.restore();
+  }
+
   function draw() {
     var Uo = num("Uo"), Uc = num("Uc"), F = num("F"), Fc = num("Fc");
+    var ovl = el("ovl").checked;
     labels(Uo, Uc, F, Fc);
     var i, u = new Float64Array(N + 1), s = new Float64Array(N + 1), env = new Float64Array(N + 1);
+    var car = new Float64Array(N + 1);
     for (i = 0; i <= N; i++) {
       var tms = WINDOW_MS * i / N;
-      var uo = Uo * Math.cos(2 * Math.PI * F * tms);
       var c = Math.cos(2 * Math.PI * Fc * tms);
-      var amp = mode === "AM" ? (Uc + uo) : (uo * Uc);
-      u[i] = uo;
+      var amp = ampAt(tms, Uo, Uc, F);
+      u[i] = Uo * Math.cos(2 * Math.PI * F * tms);
       s[i] = amp * c;
       env[i] = Math.abs(amp);
+      car[i] = Uc * c;
     }
     var g1 = setup(canvases[0]), b1 = axes(g1, "uΩ", 2.3, "mid");
     plot(g1, b1, u, "#1f3a93", 2.2);
+    var z = zoomRange(Uo, Uc, F, Fc);
     var g2 = setup(canvases[1]), b2 = axes(g2, "u" + mode, 4.5, "mid");
-    plot(g2, b2, s, "#e61ae6", 1.1);
+    if (ovl) {
+      band(g2, b2, z.t0 - z.hw, z.t0 + z.hw);
+      plot(g2, b2, car, "rgba(224, 32, 32, 0.45)", 1);  // under the signal, so the signal stays readable
+    }
+    plot(g2, b2, s, "#e61ae6", 1.2);
+    el("pz").hidden = !ovl;
+    if (ovl) drawZoom(Uo, Uc, F, Fc, z);
     var g3 = setup(canvases[2]), b3 = axes(g3, "", 4.5, "bottom");
     plot(g3, b3, env, "#0b2fd6", 2.6, [9, 6]);
   }
@@ -189,6 +272,7 @@
   });
   el("mAM").addEventListener("click", function () { mode = "AM"; draw(); });
   el("mDSB").addEventListener("click", function () { mode = "DSB"; draw(); });
+  el("ovl").addEventListener("change", draw);
   var t = null;
   window.addEventListener("resize", function () { clearTimeout(t); t = setTimeout(draw, 80); });
   draw();
