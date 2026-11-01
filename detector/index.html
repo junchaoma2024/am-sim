@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
+<title>二极管峰值包络检波器</title>
+<style>
+  :root { --ink: #1a1a1a; --muted: #666; --line: #d9d9d9; --navy: #1f3a93; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #fff; color: var(--ink);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 0 14px 28px; }
+  header { padding: 14px 0 4px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .hint { font-size: 14px; color: var(--muted); margin: 4px 0 0; }
+  .circuit { display: block; width: 100%; max-width: 420px; margin: 6px auto 0; }
+  .circuit text { font-family: "Times New Roman", serif; font-style: italic; font-size: 15px; }
+  .circuit .up { font-style: normal; }
+  .controls { position: sticky; top: 0; z-index: 2; background: #fff; padding: 6px 0 4px; border-bottom: 1px solid var(--line); }
+  .row { display: flex; align-items: center; gap: 8px; height: 38px; }
+  .val { font-size: 15px; font-weight: 600; min-width: 150px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .step { width: 34px; height: 32px; border: 1px solid #bbb; border-radius: 8px; background: #fff; font-size: 20px; line-height: 1; color: var(--ink); flex: none; }
+  .step:active { background: #f0f0f0; }
+  input[type=range] { flex: 1; min-width: 60px; height: 32px; margin: 0; accent-color: var(--navy); }
+  .panel { margin-top: 12px; }
+  .panel h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  canvas { display: block; width: 100%; }
+  sub { font-size: 0.72em; }
+  @media (max-width: 480px) {
+    .val { min-width: 128px; font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>二极管峰值包络检波器</h1>
+    <p class="hint">拖动滑块改变参数，观察各点波形。载波频率固定为 50 kHz，载波振幅为 1 V。</p>
+    <svg class="circuit" viewBox="0 0 360 150" role="img" aria-label="检波电路，输入 u_s 经二极管接电容 C 和电阻 R，再经隔直电容 C_c 接负载 R_L">
+      <g stroke="#000" stroke-width="1.6" fill="none">
+        <path d="M34 40 H70 M92 40 H238 M34 120 H190"/>
+        <path d="M130 40 V74 M130 86 V120 M190 40 V62 M190 98 V120"/>
+        <path d="M116 74 H144 M116 86 H144" stroke-width="2.6"/>
+        <rect x="183" y="62" width="14" height="36" fill="#fff"/>
+        <path d="M70 30 L70 50 L92 40 Z" fill="#fff"/>
+        <path d="M92 29 V51" stroke-width="2"/>
+        <circle cx="30" cy="40" r="4" fill="#fff"/>
+        <circle cx="30" cy="120" r="4" fill="#fff"/>
+      </g>
+      <g stroke="#00a060" stroke-width="1.6" fill="none">
+        <path d="M246 40 H300 V62 M300 98 V120 H190"/>
+        <path d="M238 28 V52 M246 28 V52" stroke-width="2.6"/>
+        <rect x="293" y="62" width="14" height="36" fill="#fff"/>
+      </g>
+      <g fill="#000">
+        <circle cx="130" cy="40" r="3"/><circle cx="130" cy="120" r="3"/>
+        <circle cx="190" cy="40" r="3"/><circle cx="190" cy="120" r="3"/>
+      </g>
+      <g fill="#000">
+        <text class="up" x="14" y="62">+</text>
+        <text x="6" y="88">u<tspan font-size="11" dy="4">s</tspan></text>
+        <text class="up" x="15" y="114">−</text>
+        <text class="up" x="72" y="20">V<tspan font-size="11" dy="4">D</tspan></text>
+        <text x="100" y="86">C</text>
+        <text x="166" y="86">R</text>
+        <text class="up" x="318" y="58">+</text>
+        <text x="314" y="88">u<tspan font-size="11" dy="4">o</tspan></text>
+        <text class="up" x="319" y="116">−</text>
+      </g>
+      <g fill="#00a060">
+        <text x="228" y="20">C<tspan class="up" font-size="11" dy="4">c</tspan></text>
+        <text x="266" y="86">R<tspan font-size="11" dy="4">L</tspan></text>
+      </g>
+      <g fill="#0b2fd6" font-weight="bold">
+        <text class="up" x="124" y="30">A</text>
+        <text class="up" x="124" y="142">B</text>
+      </g>
+    </svg>
+  </header>
+
+  <section class="controls" aria-label="参数">
+    <div class="row">
+      <span class="val" id="vM"></span>
+      <button class="step" type="button" data-k="M" data-d="-1" aria-label="减小">−</button>
+      <input type="range" id="M" min="0" max="1" step="0.05" value="0.5" aria-label="调幅度">
+      <button class="step" type="button" data-k="M" data-d="1" aria-label="增大">+</button>
+    </div>
+    <div class="row">
+      <span class="val" id="vF"></span>
+      <button class="step" type="button" data-k="F" data-d="-1" aria-label="减小">−</button>
+      <input type="range" id="F" min="1" max="3" step="0.5" value="1" aria-label="调制信号角频率">
+      <button class="step" type="button" data-k="F" data-d="1" aria-label="增大">+</button>
+    </div>
+    <div class="row">
+      <span class="val" id="vR"></span>
+      <button class="step" type="button" data-k="R" data-d="-1" aria-label="减小">−</button>
+      <input type="range" id="R" min="1" max="30" step="1" value="10" aria-label="检波电阻">
+      <button class="step" type="button" data-k="R" data-d="1" aria-label="增大">+</button>
+    </div>
+    <div class="row">
+      <span class="val" id="vC"></span>
+      <button class="step" type="button" data-k="C" data-d="-1" aria-label="减小">−</button>
+      <input type="range" id="C" min="1" max="50" step="1" value="20" aria-label="检波电容">
+      <button class="step" type="button" data-k="C" data-d="1" aria-label="增大">+</button>
+    </div>
+    <div class="row">
+      <span class="val" id="vRL"></span>
+      <button class="step" type="button" data-k="RL" data-d="-1" aria-label="减小">−</button>
+      <input type="range" id="RL" min="1" max="50" step="1" value="15" aria-label="负载电阻">
+      <button class="step" type="button" data-k="RL" data-d="1" aria-label="增大">+</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>① 输入信号 u<sub>s</sub>(t)</h2>
+    <canvas id="c1" aria-label="输入调幅信号波形"></canvas>
+  </section>
+  <section class="panel">
+    <h2>② A 点电压 u<sub>A</sub>(t)，浅色为 u<sub>s</sub>(t)</h2>
+    <canvas id="c2" aria-label="A 点电压波形"></canvas>
+  </section>
+  <section class="panel">
+    <h2>③ 输出电压 u<sub>o</sub>(t)，虚线为调制信号</h2>
+    <canvas id="c3" aria-label="输出电压波形"></canvas>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  // Units: V, mA, kΩ, mS, nF, µs (1 nF × 1 V / 1 µs = 1 mA). Fixed 1 ms window.
+  // u_s = U_cm (1 + m_a cos Ωt) cos ω_c t with U_cm = 1 V and f_c = 50 kHz.
+  // The diode is an ideal switch with R_D = 100 Ω; node A is integrated with backward Euler.
+  // C_c is taken as very large: its voltage is the DC value of u_A, found by iterating over a few
+  // modulating periods before the window, and u_o = u_A − U_Cc.
+  var FC = 0.05;                 // carrier frequency in cycles per µs (50 kHz)
+  var UCM = 1, RD = 0.1;         // V, kΩ
+  var WINDOW = 1000;             // µs
+  var DT = 0.1;                  // µs, 200 steps per carrier period
+  var NP = 2000;                 // plotted points
+  var el = function (id) { return document.getElementById(id); };
+  var inputs = { M: el("M"), F: el("F"), R: el("R"), C: el("C"), RL: el("RL") };
+  var canvases = [el("c1"), el("c2"), el("c3")];
+
+  function num(k) { return parseFloat(inputs[k].value); }
+
+  function us(t, m, f) {
+    return UCM * (1 + m * Math.cos(2 * Math.PI * f * t)) * Math.cos(2 * Math.PI * FC * t);
+  }
+
+  // run node A from time t0 for n steps, starting at v; record every `every` steps into out (if given)
+  function run(p, t0, n, v, vcc, out, every) {
+    var cdt = p.C / DT, gr = 1 / p.R, gl = 1 / p.RL, gd = 1 / RD, sum = 0, k, t, s, off;
+    for (k = 1; k <= n; k++) {
+      t = t0 + k * DT;
+      s = us(t, p.M, p.f);
+      off = (cdt * v + gl * vcc) / (cdt + gr + gl);
+      v = s > off ? (cdt * v + gd * s + gl * vcc) / (cdt + gd + gr + gl) : off;
+      sum += v;
+      if (out && k % every === 0) out.push(v);
+    }
+    return { v: v, mean: sum / n };
+  }
+
+  function simulate(p) {
+    var period = 1 / p.f;                       // µs
+    var n = Math.round(period / DT), v = UCM * (1 + p.M), vcc = UCM, i, r;
+    for (i = 0; i < 4; i++) {                   // settle u_A and the DC voltage on C_c
+      r = run(p, -period, n, v, vcc, null, 1);
+      v = r.v; vcc = r.mean;
+    }
+    var nw = Math.round(WINDOW / DT), every = nw / NP, ua = [v];
+    run(p, 0, nw, v, vcc, ua, every);
+    return { ua: ua, vcc: vcc };
+  }
+
+  function setup(cv) {
+    var w = cv.clientWidth;
+    var h = Math.round(Math.max(120, Math.min(200, w * 0.38)));
+    var dpr = window.devicePixelRatio || 1;
+    cv.style.height = h + "px";
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    var ctx = cv.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    return { ctx: ctx, w: w, h: h };
+  }
+
+  function axes(g, yLabel, yMax) {
+    var ctx = g.ctx, L = 26, R = g.w - 14, T = 10, B = g.h - 8, base = (T + B) / 2;
+    ctx.strokeStyle = "#000"; ctx.fillStyle = "#000"; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(L, B); ctx.lineTo(L, T); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(L, T - 1); ctx.lineTo(L - 4.5, T + 9); ctx.lineTo(L + 4.5, T + 9); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(L, base); ctx.lineTo(R, base); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(R + 1, base); ctx.lineTo(R - 9, base - 4.5); ctx.lineTo(R - 9, base + 4.5); ctx.closePath(); ctx.fill();
+    ctx.font = "italic 13px 'Times New Roman', serif";
+    ctx.fillText("t", R - 8, base + 18);
+    ctx.font = "italic 12px 'Times New Roman', serif";
+    if (yLabel) ctx.fillText(yLabel, L + 6, T + 10);
+    var top = T + 4;
+    return { L: L + 2, R: R - 12, T: top, B: B - 2, base: base, scale: (base - top) / yMax };
+  }
+
+  function plot(g, box, ys, color, width, dash) {
+    var ctx = g.ctx, i, n = ys.length - 1;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(box.L, box.T - 4, box.R - box.L, box.B - box.T + 8); ctx.clip();
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    for (i = 0; i <= n; i++) {
+      var x = box.L + (box.R - box.L) * i / n, y = box.base - ys[i] * box.scale;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function labels(p) {
+    el("vM").innerHTML = "m<sub>a</sub> = " + p.M.toFixed(2);
+    el("vF").innerHTML = "Ω = 2π × " + (p.f * 1000).toFixed(1) + " kHz";
+    el("vR").innerHTML = "R = " + p.R.toFixed(0) + " kΩ";
+    el("vC").innerHTML = "C = " + p.C.toFixed(0) + " nF";
+    el("vRL").innerHTML = "R<sub>L</sub> = " + p.RL.toFixed(0) + " kΩ";
+  }
+
+  function draw() {
+    var p = { M: num("M"), f: num("F") / 1000, R: num("R"), C: num("C"), RL: num("RL") };
+    labels(p);
+    var sim = simulate(p), i, t;
+    var s = new Array(2 * NP + 1), ua = sim.ua, uo = new Array(NP + 1), ref = new Array(NP + 1);
+    for (i = 0; i <= 2 * NP; i++) s[i] = us(WINDOW * i / (2 * NP), p.M, p.f);
+    for (i = 0; i <= NP; i++) {
+      t = WINDOW * i / NP;
+      uo[i] = ua[i] - sim.vcc;
+      ref[i] = p.M * UCM * Math.cos(2 * Math.PI * p.f * t);
+    }
+    var g1 = setup(canvases[0]), b1 = axes(g1, "us", 2.3);
+    plot(g1, b1, s, "#e61ae6", 1.1);
+    var g2 = setup(canvases[1]), b2 = axes(g2, "uA", 2.3);
+    plot(g2, b2, s, "rgba(230, 26, 230, 0.28)", 1);
+    plot(g2, b2, ua, "#c00000", 2);
+    var g3 = setup(canvases[2]), b3 = axes(g3, "uo", 1.4);
+    plot(g3, b3, ref, "#0b2fd6", 2, [8, 6]);
+    plot(g3, b3, uo, "#c00000", 2);
+  }
+
+  function nudge(k, dir) {
+    var inp = inputs[k], step = parseFloat(inp.step);
+    var v = parseFloat(inp.value) + dir * step;
+    v = Math.min(parseFloat(inp.max), Math.max(parseFloat(inp.min), v));
+    inp.value = (Math.round(v / step) * step).toFixed(2);
+    draw();
+  }
+
+  Object.keys(inputs).forEach(function (k) { inputs[k].addEventListener("input", draw); });
+  Array.prototype.forEach.call(document.querySelectorAll(".step"), function (b) {
+    b.addEventListener("click", function () { nudge(b.getAttribute("data-k"), parseFloat(b.getAttribute("data-d"))); });
+  });
+  var timer = null;
+  window.addEventListener("resize", function () { clearTimeout(timer); timer = setTimeout(draw, 80); });
+  draw();
+})();
+</script>
+</body>
+</html>
